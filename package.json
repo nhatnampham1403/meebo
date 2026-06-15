@@ -1,0 +1,17 @@
+{
+  "name": "meebo",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w apps/web",
+    "typecheck": "tsc --noEmit -p apps/web && tsc --noEmit -p packages/shared",
+    "seed:members": "tsx scripts/seed-members.ts"
+  },
+  "devDependencies": {
+    "dotenv": "^16.5.0",
+    "tsx": "^4.19.4"
+  }
+}
