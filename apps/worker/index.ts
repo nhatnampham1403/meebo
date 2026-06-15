@@ -6,6 +6,8 @@ import { runDigest } from './scheduler/digest';
 import { runAlerts } from './scheduler/alerts';
 import { runStale } from './scheduler/stale';
 import { runVendor } from './scheduler/vendor';
+import { runCheckinSend } from './scheduler/checkin-send';
+import { runCheckinTimeout } from './scheduler/checkin-timeout';
 import { createBot } from './lib/telegram';
 
 const app = express();
@@ -23,6 +25,8 @@ const JOBS: Record<string, () => Promise<void>> = {
   alerts: runAlerts,
   stale: runStale,
   vendor: runVendor,
+  'checkin-send': runCheckinSend,
+  'checkin-timeout': runCheckinTimeout,
 };
 
 app.post('/trigger/:job', (req, res) => {
@@ -39,10 +43,12 @@ app.post('/trigger/:job', (req, res) => {
 
 // ─── Cron schedule ────────────────────────────────────────────────────────────
 // Timezone: adjust TZ env var if your team is not in UTC
-cron.schedule('0 7 * * *',   () => void runDigest(),  { name: 'digest' });
-cron.schedule('15 7 * * *',  () => void runAlerts(),  { name: 'alerts' });
-cron.schedule('0 8 * * 1',   () => void runStale(),   { name: 'stale' });   // Monday only
-cron.schedule('30 8 * * *',  () => void runVendor(),  { name: 'vendor' });
+cron.schedule('0 7 * * *',   () => void runDigest(),         { name: 'digest' });
+cron.schedule('15 7 * * *',  () => void runAlerts(),         { name: 'alerts' });
+cron.schedule('0 8 * * 1',   () => void runStale(),          { name: 'stale' });          // Monday
+cron.schedule('30 8 * * *',  () => void runVendor(),         { name: 'vendor' });
+cron.schedule('0 9 * * *',   () => void runCheckinSend(),    { name: 'checkin-send' });
+cron.schedule('0 10 * * *',  () => void runCheckinTimeout(), { name: 'checkin-timeout' });
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 const PORT = Number(process.env.PORT ?? 4000);
@@ -50,10 +56,12 @@ const PORT = Number(process.env.PORT ?? 4000);
 app.listen(PORT, async () => {
   console.log(`[worker] Listening on port ${PORT}`);
   console.log('[worker] Cron schedule:');
-  console.log('  digest  → 07:00 daily');
-  console.log('  alerts  → 07:15 daily');
-  console.log('  stale   → 08:00 Monday');
-  console.log('  vendor  → 08:30 daily');
+  console.log('  digest          → 07:00 daily');
+  console.log('  alerts          → 07:15 daily');
+  console.log('  stale           → 08:00 Monday');
+  console.log('  vendor          → 08:30 daily');
+  console.log('  checkin-send    → 09:00 daily');
+  console.log('  checkin-timeout → 10:00 daily');
 
   // Auto-register Telegram webhook if WEBHOOK_URL is provided
   const webhookUrl = process.env.WEBHOOK_URL;

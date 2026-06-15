@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { createBot } from '../lib/telegram';
 import { handleCommand } from './commands';
+import { handleCheckinCallback } from './checkin';
 
 export interface TelegramUpdate {
   update_id: number;
@@ -64,8 +65,14 @@ webhookRouter.post('/telegram', async (req: Request, res: Response) => {
         return;
       }
 
-      // Placeholder for future callback routing
-      await bot.answerCallbackQuery(queryId, 'Action received');
+      // Route checkin button taps
+      if (data.startsWith('checkin:')) {
+        await handleCheckinCallback(bot, queryId, data);
+        return;
+      }
+
+      // Unknown callback — acknowledge silently
+      await bot.answerCallbackQuery(queryId);
     }
   } catch (err) {
     console.error('[webhook] Error processing update:', err);

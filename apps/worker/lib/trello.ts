@@ -52,7 +52,7 @@ export class TrelloWorkerClient {
     return `key=${this.key}&token=${this.token}`;
   }
 
-  private async get<T>(path: string): Promise<T> {
+  protected async get<T>(path: string): Promise<T> {
     return withRetry(async () => {
       const res = await fetch(`${BASE}${path}&${this.auth()}`);
       if (!res.ok) throw new Error(`Trello GET ${path} → ${res.status}`);
@@ -109,4 +109,32 @@ export function formatDate(isoDate: string): string {
 export function hasLabel(card: TrelloCard, ...names: string[]): boolean {
   const lower = names.map((n) => n.toLowerCase());
   return card.labels.some((l) => lower.includes(l.name.toLowerCase()));
+}
+
+// ─── Write methods ────────────────────────────────────────────────────────────
+
+export class TrelloWriteClient extends TrelloWorkerClient {
+  async getCard(cardId: string): Promise<TrelloCard> {
+    return this.get<TrelloCard>(
+      `/cards/${cardId}?fields=id,name,desc,idList,idMembers,due,dueComplete,dateLastActivity,labels,shortUrl`,
+    );
+  }
+
+  async addComment(cardId: string, text: string): Promise<void> {
+    await withRetry(async () => {
+      const res = await fetch(
+        `${BASE}/cards/${cardId}/actions/comments?key=${process.env.TRELLO_KEY}&token=${process.env.TRELLO_TOKEN}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+        },
+      );
+      if (!res.ok) throw new Error(`Trello addComment → ${res.status}`);
+    });
+  }
+}
+
+export function createTrelloWriteClient(): TrelloWriteClient {
+  return new TrelloWriteClient();
 }
