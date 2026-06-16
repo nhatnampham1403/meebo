@@ -6,6 +6,8 @@ import { TrelloClient } from '@/lib/trello';
 import { extractTasksFromNotes } from '@/lib/openai';
 import type { TeamContext } from '@/lib/openai';
 
+export const dynamic = 'force-dynamic';
+
 const RequestSchema = z.object({
   source_text: z.string().min(10, 'Notes must be at least 10 characters'),
   source_type: SourceType,

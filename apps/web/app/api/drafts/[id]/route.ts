@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { Priority } from '@trello-optimization/shared';
 import { db } from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+
 const PatchSchema = z.object({
   extracted_title: z.string().min(1).optional(),
   project: z.string().nullable().optional(),

@@ -4,6 +4,8 @@ import { draftToTrelloCard } from '@trello-optimization/shared';
 import { db } from '@/lib/db';
 import { TrelloClient } from '@/lib/trello';
 
+export const dynamic = 'force-dynamic';
+
 const RequestSchema = z.object({
   draft_id: z.string().uuid(),
 });

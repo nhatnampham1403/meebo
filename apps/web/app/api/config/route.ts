@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { db } from '@/lib/db';
 import { TrelloClient } from '@/lib/trello';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   const [{ data: teamMembers, error: membersError }, trelloLists, { data: config, error: configError }] =
     await Promise.all([
