@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { createBot } from '../lib/telegram';
 import { handleCommand } from './commands';
 import { handleCheckinCallback } from './checkin';
+import { handleCaptureCallback } from './capture-callback';
 import { handleCaptureTranscript, isAwaitingCapture } from './capture';
 
 export interface TelegramUpdate {
@@ -66,19 +67,27 @@ webhookRouter.post('/telegram', async (req: Request, res: Response) => {
     if (update.callback_query) {
       const { id: queryId, data } = update.callback_query;
       const chatId = update.callback_query.message?.chat.id;
+      const messageId = update.callback_query.message?.message_id;
 
       if (!chatId || !data) {
         await bot.answerCallbackQuery(queryId);
         return;
       }
 
-      // Route checkin button taps
       if (data.startsWith('checkin:')) {
         await handleCheckinCallback(bot, queryId, data);
         return;
       }
 
-      // Unknown callback — acknowledge silently
+      if (data.startsWith('capture:')) {
+        if (!messageId) {
+          await bot.answerCallbackQuery(queryId, '❌ Invalid response');
+          return;
+        }
+        await handleCaptureCallback(bot, queryId, data, chatId, messageId);
+        return;
+      }
+
       await bot.answerCallbackQuery(queryId);
     }
   } catch (err) {

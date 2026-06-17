@@ -113,25 +113,116 @@ export function hasLabel(card: TrelloCard, ...names: string[]): boolean {
 
 // ─── Write methods ────────────────────────────────────────────────────────────
 
+export interface TrelloCardPayload {
+  name: string;
+  desc: string;
+  idList: string;
+  idMembers: string[];
+  due?: string | null;
+}
+
+export interface CreatedCard {
+  id: string;
+  url: string;
+  shortUrl: string;
+}
+
 export class TrelloWriteClient extends TrelloWorkerClient {
+  private trelloKey(): string {
+    return process.env.TRELLO_KEY ?? '';
+  }
+
+  private trelloToken(): string {
+    return process.env.TRELLO_TOKEN ?? '';
+  }
+
+  private trelloBoardId(): string {
+    return process.env.TRELLO_BOARD_ID ?? '';
+  }
+
+  private async request<T>(path: string, options?: RequestInit): Promise<T> {
+    const sep = path.includes('?') ? '&' : '?';
+    const url = `${BASE}${path}${sep}key=${this.trelloKey()}&token=${this.trelloToken()}`;
+    const res = await fetch(url, options);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Trello ${options?.method ?? 'GET'} ${path} → ${res.status}: ${text}`);
+    }
+    return res.json() as Promise<T>;
+  }
+
   async getCard(cardId: string): Promise<TrelloCard> {
     return this.get<TrelloCard>(
       `/cards/${cardId}?fields=id,name,desc,idList,idMembers,due,dueComplete,dateLastActivity,labels,shortUrl`,
     );
   }
 
-  async addComment(cardId: string, text: string): Promise<void> {
+  async createList(name: string): Promise<TrelloList> {
+    return withRetry(() =>
+      this.request<TrelloList>(`/boards/${this.trelloBoardId()}/lists`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      }),
+    );
+  }
+
+  async resolveOrCreateList(projectName: string): Promise<string> {
+    const lists = await this.getLists();
+    const open = lists.filter((l) => !l.closed);
+    const match = open.find(
+      (l) => l.name.trim().toLowerCase() === projectName.trim().toLowerCase(),
+    );
+    if (match) return match.id;
+    const created = await this.createList(projectName);
+    return created.id;
+  }
+
+  async createCard(payload: TrelloCardPayload): Promise<CreatedCard> {
+    return withRetry(() =>
+      this.request<CreatedCard>('/cards', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }),
+    );
+  }
+
+  async addChecklist(cardId: string, name: string, items: string[]): Promise<void> {
     await withRetry(async () => {
-      const res = await fetch(
-        `${BASE}/cards/${cardId}/actions/comments?key=${process.env.TRELLO_KEY}&token=${process.env.TRELLO_TOKEN}`,
-        {
+      const checklist = await this.request<{ id: string }>('/checklists', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idCard: cardId, name }),
+      });
+      for (const item of items) {
+        await this.request(`/checklists/${checklist.id}/checkItems`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text }),
-        },
-      );
-      if (!res.ok) throw new Error(`Trello addComment → ${res.status}`);
+          body: JSON.stringify({ name: item }),
+        });
+      }
     });
+  }
+
+  async archiveCard(cardId: string): Promise<void> {
+    await withRetry(() =>
+      this.request(`/cards/${cardId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ closed: true }),
+      }),
+    );
+  }
+
+  async addComment(cardId: string, text: string): Promise<void> {
+    await withRetry(() =>
+      this.request(`/cards/${cardId}/actions/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      }),
+    );
   }
 }
 

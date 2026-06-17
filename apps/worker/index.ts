@@ -86,4 +86,10 @@ app.listen(PORT, async () => {
   if (!process.env.TELEGRAM_WEBHOOK_SECRET) {
     console.warn('[worker] ⚠️  TELEGRAM_WEBHOOK_SECRET not set — webhook header validation disabled');
   }
+  if (!process.env.OPENAI_API_KEY) {
+    console.warn('[worker] ⚠️  OPENAI_API_KEY not set — /capture extraction will fail');
+  }
+  if (!process.env.APP_SECRET || !(process.env.VERCEL_URL ?? process.env.WEB_APP_URL)) {
+    console.warn('[worker] ⚠️  APP_SECRET or VERCEL_URL not set — ✏️ Edit links will not work');
+  }
 });

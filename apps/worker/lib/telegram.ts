@@ -56,6 +56,7 @@ export class TelegramBot {
     chatId: number | string,
     text: string,
     parseMode: 'HTML' | 'Markdown' = 'HTML',
+    options?: { forceReply?: boolean },
   ): Promise<TelegramMessage> {
     return withRetry(() =>
       this.call<TelegramMessage>('sendMessage', {
@@ -63,6 +64,9 @@ export class TelegramBot {
         text,
         parse_mode: parseMode,
         disable_web_page_preview: true,
+        ...(options?.forceReply
+          ? { reply_markup: { force_reply: true, selective: true } }
+          : {}),
       }),
     );
   }
@@ -98,6 +102,7 @@ export class TelegramBot {
     messageId: number,
     text: string,
     parseMode: 'HTML' | 'Markdown' = 'HTML',
+    options?: { clearKeyboard?: boolean },
   ): Promise<void> {
     await withRetry(() =>
       this.call<TelegramMessage>('editMessageText', {
@@ -106,6 +111,7 @@ export class TelegramBot {
         text,
         parse_mode: parseMode,
         disable_web_page_preview: true,
+        ...(options?.clearKeyboard ? { reply_markup: { inline_keyboard: [] } } : {}),
       }),
     );
   }

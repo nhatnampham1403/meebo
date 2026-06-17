@@ -305,3 +305,97 @@ export function formatSummary(stats: SummaryStats): string {
   ];
   return lines.join('\n');
 }
+
+// ─── Capture messages ───────────────────────────────────────────────────────────
+
+export function formatCapturePrompt(sourceType: 'sprint_meeting' | 'customer_meeting'): string {
+  const typeHint =
+    sourceType === 'customer_meeting' ? 'customer meeting' : 'sprint meeting';
+  return (
+    `📋 <b>Capture mode</b> (${typeHint})\n\n` +
+    `<b>Reply to this message</b> with your meeting notes.\n` +
+    `(In group chats, plain messages are hidden from the bot unless you reply.)\n\n` +
+    `<i>Tip: /capture customer or /capture sprint — or paste notes in one message after the command.</i>`
+  );
+}
+
+export function formatCaptureProcessing(): string {
+  return '⏳ <b>Processing meeting notes…</b> This may take 30–60 seconds.';
+}
+
+export function formatCaptureSummary(summary: string, taskCount: number): string {
+  const taskWord = taskCount === 1 ? 'task' : 'tasks';
+  const preview = escape(summary.slice(0, 800));
+  const suffix = summary.length > 800 ? '…' : '';
+  return (
+    `📝 <b>Meeting summary</b>\n\n${preview}${suffix}\n\n` +
+    `Found <b>${taskCount}</b> ${taskWord} — review each below.`
+  );
+}
+
+export function formatCaptureNoTasks(): string {
+  return '📝 <b>Meeting summary saved.</b>\n\nNo actionable tasks were found in these notes.';
+}
+
+export interface CaptureTaskLine {
+  index: number;
+  title: string;
+  project: string | null;
+  owner: string | null;
+  dueDate: string | null;
+  needsClarification: boolean;
+}
+
+export function formatCaptureTaskLine(task: CaptureTaskLine): string {
+  const meta: string[] = [];
+  if (task.project) meta.push(escape(task.project));
+  if (task.owner) meta.push(escape(task.owner));
+  if (task.dueDate) meta.push(escape(task.dueDate));
+  const metaStr = meta.length ? `\n<i>${meta.join(' · ')}</i>` : '';
+  const flag = task.needsClarification ? '\n⚠️ <b>Needs review on web</b>' : '';
+  return `<b>${task.index}.</b> ${escape(task.title)}${metaStr}${flag}`;
+}
+
+export function formatCaptureTaskCreated(title: string, cardUrl: string): string {
+  return `✅ <b>Created</b> — <a href="${cardUrl}">${escape(title)}</a>`;
+}
+
+export function formatCaptureTaskSkipped(title: string): string {
+  return `❌ <b>Skipped</b> — ${escape(title)}`;
+}
+
+export function formatCaptureApproveAck(): string {
+  return '✅ Card created!';
+}
+
+export function formatCaptureSkipAck(): string {
+  return 'Skipped';
+}
+
+export function formatCaptureEditAck(): string {
+  return 'Open web editor →';
+}
+
+export function formatCaptureEditReply(link: string): string {
+  return `✏️ <b>Edit this task on the web:</b>\n<a href="${link}">${escape(link)}</a>`;
+}
+
+export function formatCaptureAlreadyApproved(): string {
+  return '✅ Already approved';
+}
+
+export function formatCaptureAlreadySkipped(): string {
+  return 'Already skipped';
+}
+
+export function formatCaptureNeedsClarificationBlock(): string {
+  return '⚠️ Edit on web first — Approve is disabled for this task';
+}
+
+export function formatCaptureDraftNotFound(): string {
+  return '❌ Task not found';
+}
+
+export function formatCaptureApproveFailed(): string {
+  return '⚠️ Could not create card — check worker logs';
+}
