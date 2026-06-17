@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { createBot } from '../lib/telegram';
 import { handleCommand } from './commands';
 import { handleCheckinCallback } from './checkin';
+import { handleCaptureTranscript, isAwaitingCapture } from './capture';
 
 export interface TelegramUpdate {
   update_id: number;
@@ -49,10 +50,16 @@ webhookRouter.post('/telegram', async (req: Request, res: Response) => {
       if (!text) return;
 
       if (text.startsWith('/')) {
-        // Strip @BotName suffix: /command@meebo_bot → command
-        const raw = text.split(' ')[0] ?? '';
-        const command = raw.replace(/^\//, '').split('@')[0].toLowerCase();
-        await handleCommand(bot, chat.id, command, from.first_name);
+        const spaceIdx = text.indexOf(' ');
+        const rawCommand = spaceIdx === -1 ? text : text.slice(0, spaceIdx);
+        const args = spaceIdx === -1 ? '' : text.slice(spaceIdx + 1).trim();
+        const command = rawCommand.replace(/^\//, '').split('@')[0].toLowerCase();
+        await handleCommand(bot, chat.id, command, from, args);
+        return;
+      }
+
+      if (isAwaitingCapture(chat.id)) {
+        await handleCaptureTranscript(bot, chat.id, from.id, from.first_name, text);
       }
     }
 

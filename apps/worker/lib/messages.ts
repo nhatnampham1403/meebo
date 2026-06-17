@@ -229,7 +229,8 @@ export function formatStart(): string {
     `/today — cards due today\n` +
     `/waiting — waiting on external parties\n` +
     `/blocked — blocked cards\n` +
-    `/summary — board stats`
+    `/summary — board stats\n` +
+    `/capture — paste meeting notes to extract tasks`
   );
 }
 

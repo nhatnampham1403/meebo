@@ -12,6 +12,7 @@ import {
   formatBlockedEmpty,
   formatSummary,
 } from '../lib/messages';
+import { handleCaptureCommand } from './capture';
 
 async function loadMemberMap(): Promise<Map<string, string>> {
   const { data } = await db.from('team_members').select('trello_member_id, display_name');
@@ -135,14 +136,18 @@ export async function handleCommand(
   bot: TelegramBot,
   chatId: number,
   command: string,
-  fromName: string,
+  from: { id: number; first_name: string },
+  args = '',
 ): Promise<void> {
-  console.log(`[commands] /${command} from ${fromName} in chat ${chatId}`);
+  console.log(`[commands] /${command} from ${from.first_name} in chat ${chatId}`);
 
   try {
     switch (command) {
       case 'start':
         await bot.sendMessage(chatId, formatStart());
+        break;
+      case 'capture':
+        await handleCaptureCommand(bot, chatId, from.id, from.first_name, args);
         break;
       case 'overdue':
         await cmdOverdue(bot, chatId);
