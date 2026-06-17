@@ -7,10 +7,7 @@
 import { db } from '../lib/db';
 import { createBot } from '../lib/telegram';
 import { createTrelloClient, daysFromNow, formatDate } from '../lib/trello';
-
-function escape(t: string): string {
-  return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+import { formatCheckinPrompt } from '../lib/messages';
 
 export async function runCheckinSend(): Promise<void> {
   const JOB = 'checkin-send';
@@ -24,7 +21,6 @@ export async function runCheckinSend(): Promise<void> {
 
   const listMap = new Map(lists.map((l) => [l.id, l.name]));
 
-  // Cards due within 0-48 hours, not yet complete, with at least one assigned member
   const dueSoon = cards.filter((card) => {
     if (!card.due || card.dueComplete || card.idMembers.length === 0) return false;
     const d = daysFromNow(card.due);
@@ -36,7 +32,6 @@ export async function runCheckinSend(): Promise<void> {
     return;
   }
 
-  // Load all team members that have telegram_user_id set
   const { data: members } = await db
     .from('team_members')
     .select('id, display_name, trello_member_id, telegram_user_id')
@@ -56,7 +51,6 @@ export async function runCheckinSend(): Promise<void> {
       const member = memberByTrelloId.get(trelloMemberId);
       if (!member?.telegram_user_id) continue;
 
-      // Enforce one open prompt per (card, member)
       const { data: existing } = await db
         .from('pending_checkins')
         .select('id')
@@ -70,7 +64,6 @@ export async function runCheckinSend(): Promise<void> {
         continue;
       }
 
-      // Insert the row first to get its UUID (used as callback_data)
       const { data: checkin, error } = await db
         .from('pending_checkins')
         .insert({ trello_card_id: card.id, member_id: member.id })
@@ -83,13 +76,12 @@ export async function runCheckinSend(): Promise<void> {
       }
 
       const listName = listMap.get(card.idList) ?? 'Unknown';
-      const dueStr = formatDate(card.due!);
-
-      const text =
-        `👋 <b>Check-in: ${escape(card.name)}</b>\n\n` +
-        `📁 Project: ${escape(listName)}\n` +
-        `📅 Due: ${dueStr}\n\n` +
-        `How's it going, ${escape(member.display_name)}?`;
+      const text = formatCheckinPrompt(
+        card.name,
+        listName,
+        formatDate(card.due!),
+        member.display_name,
+      );
 
       try {
         const msg = await bot.sendInlineKeyboard(
@@ -104,7 +96,6 @@ export async function runCheckinSend(): Promise<void> {
           ],
         );
 
-        // Store message_id so we can edit it after the member responds
         await db
           .from('pending_checkins')
           .update({ telegram_message_id: String(msg.message_id) })
@@ -114,7 +105,6 @@ export async function runCheckinSend(): Promise<void> {
         sent++;
       } catch (err) {
         console.error(`[${JOB}] Failed to DM ${member.display_name}:`, err);
-        // Clean up the orphaned row so it doesn't block future sends
         await db.from('pending_checkins').delete().eq('id', checkin.id);
       }
     }

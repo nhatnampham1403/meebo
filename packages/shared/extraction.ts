@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
-import { ExtractionResponse, SourceType } from '@trello-optimization/shared';
-import type { ExtractionResult } from '@trello-optimization/shared';
 import { z } from 'zod';
+import { ExtractionResponse, SourceType } from './schema';
+import type { ExtractionResult } from './schema';
 
 const SYSTEM_PROMPT = `You are MeeBo, a task-extraction assistant for a sports-tech team that manages
 projects and third-party contracts on a Trello board.
@@ -63,7 +63,7 @@ export interface TeamContext {
   members: TeamMemberContext[];
 }
 
-interface ExtractOptions {
+export interface ExtractOptions {
   sourceText: string;
   sourceType: z.infer<typeof SourceType>;
   existingProjects: string[];

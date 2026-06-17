@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { SourceType } from '@trello-optimization/shared';
+import {
+  SourceType,
+  extractTasksFromNotes,
+  type TeamContext,
+} from '@trello-optimization/shared';
 import { db } from '@/lib/db';
 import { TrelloClient } from '@/lib/trello';
-import { extractTasksFromNotes } from '@/lib/openai';
-import type { TeamContext } from '@/lib/openai';
 
 export const dynamic = 'force-dynamic';
 
@@ -82,6 +84,23 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const { data: meeting, error: meetingInsertError } = await db
+    .from('meetings')
+    .insert({
+      source_type,
+      source_channel: 'web',
+      raw_transcript: source_text,
+    })
+    .select('id')
+    .single();
+
+  if (meetingInsertError || !meeting) {
+    return NextResponse.json(
+      { error: `Failed to save meeting: ${meetingInsertError?.message ?? 'unknown error'}` },
+      { status: 500 },
+    );
+  }
+
   let result;
   try {
     result = await extractTasksFromNotes({
@@ -93,6 +112,18 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     return NextResponse.json(
       { error: `Extraction failed: ${err instanceof Error ? err.message : String(err)}` },
+      { status: 500 },
+    );
+  }
+
+  const { error: meetingUpdateError } = await db
+    .from('meetings')
+    .update({ summary: result.summary })
+    .eq('id', meeting.id);
+
+  if (meetingUpdateError) {
+    return NextResponse.json(
+      { error: `Failed to update meeting summary: ${meetingUpdateError.message}` },
       { status: 500 },
     );
   }
@@ -122,6 +153,8 @@ export async function POST(request: NextRequest) {
       needs_clarification: task.needs_clarification,
       original_source_text: task.original_source_text,
       meeting_summary: result.summary,
+      meeting_id: meeting.id,
+      source_channel: 'web',
       review_status: (task.needs_clarification ? 'needs_clarification' : 'pending') as
         | 'pending'
         | 'needs_clarification',

@@ -10,10 +10,7 @@
 import { db } from '../lib/db';
 import { createBot, requireGroupChatId } from '../lib/telegram';
 import { createTrelloWriteClient } from '../lib/trello';
-
-function escape(t: string): string {
-  return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+import { formatCheckinReminder, formatEscalation } from '../lib/messages';
 
 function hoursAgo(hours: number): string {
   return new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
@@ -26,7 +23,6 @@ export async function runCheckinTimeout(): Promise<void> {
   const bot = createBot();
   const now = new Date().toISOString();
 
-  // ── Pass 1: 24 h reminders ────────────────────────────────────────────────
   const { data: toRemind } = await db
     .from('pending_checkins')
     .select('id, trello_card_id, member_id')
@@ -43,7 +39,6 @@ export async function runCheckinTimeout(): Promise<void> {
       .single();
 
     if (!member?.telegram_user_id) {
-      // Still mark as reminded so we don't keep processing it
       await db
         .from('pending_checkins')
         .update({ status: 'reminded', reminder_sent_at: now })
@@ -51,7 +46,6 @@ export async function runCheckinTimeout(): Promise<void> {
       continue;
     }
 
-    // Fetch card details for a helpful reminder
     let cardName = checkin.trello_card_id;
     let cardUrl = '';
     try {
@@ -63,19 +57,10 @@ export async function runCheckinTimeout(): Promise<void> {
       // Non-fatal — use card ID as fallback
     }
 
-    const cardLink = cardUrl
-      ? `<a href="${cardUrl}">${escape(cardName)}</a>`
-      : `<code>${escape(cardName)}</code>`;
-
-    const text =
-      `⏰ <b>Reminder</b>\n\n` +
-      `You haven't responded to the check-in for:\n${cardLink}\n\n` +
-      `Please tap a button — your team is waiting!`;
-
     try {
       const msg = await bot.sendInlineKeyboard(
         member.telegram_user_id,
-        text,
+        formatCheckinReminder(cardName, cardUrl),
         [
           [
             { text: '✅ Done', callback_data: `checkin:${checkin.id}:done` },
@@ -101,7 +86,6 @@ export async function runCheckinTimeout(): Promise<void> {
     }
   }
 
-  // ── Pass 2: 48 h escalations ──────────────────────────────────────────────
   const { data: toTimeout } = await db
     .from('pending_checkins')
     .select('id, trello_card_id, member_id')
@@ -118,7 +102,6 @@ export async function runCheckinTimeout(): Promise<void> {
   }
 
   for (const checkin of toTimeout ?? []) {
-    // Mark timed out first (so a concurrent run won't double-process)
     await db
       .from('pending_checkins')
       .update({ status: 'timed_out', resolved_at: now })
@@ -148,17 +131,10 @@ export async function runCheckinTimeout(): Promise<void> {
     );
 
     if (groupId) {
-      const cardLink = cardUrl
-        ? `<a href="${cardUrl}">${escape(cardName)}</a>`
-        : `<code>${escape(cardName)}</code>`;
-
       try {
         await bot.sendMessage(
           groupId,
-          `⚠️ <b>No response — escalation</b>\n\n` +
-            `<b>${escape(memberName)}</b> did not respond to their check-in.\n` +
-            `Card: ${cardLink}\n` +
-            `Prompted 48h ago — marked as timed out.`,
+          formatEscalation(memberName, cardName, cardUrl),
         );
       } catch (err) {
         console.error(`[${JOB}] Failed to send group escalation:`, err);

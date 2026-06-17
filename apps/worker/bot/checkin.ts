@@ -8,31 +8,15 @@
 import type { TelegramBot } from '../lib/telegram';
 import { createTrelloWriteClient } from '../lib/trello';
 import { db } from '../lib/db';
-
-type CheckinResponse = 'done' | 'in_progress' | 'blocked';
+import {
+  type CheckinResponse,
+  formatCheckinConfirmation,
+  formatCheckinCallbackAck,
+  formatCheckinTrelloComment,
+} from '../lib/messages';
 
 const VALID_RESPONSES = new Set<string>(['done', 'in_progress', 'blocked']);
 
-const RESPONSE_LABEL: Record<CheckinResponse, string> = {
-  done: 'Done ✅',
-  in_progress: 'In Progress 🔄',
-  blocked: 'Blocked ❌',
-};
-
-const RESPONSE_EMOJI: Record<CheckinResponse, string> = {
-  done: '✅',
-  in_progress: '🔄',
-  blocked: '❌',
-};
-
-function escape(t: string): string {
-  return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-/**
- * Parse "checkin:{uuid}:{response}" into its parts.
- * Returns null if the format is invalid.
- */
 function parseCallbackData(
   data: string,
 ): { checkinId: string; response: CheckinResponse } | null {
@@ -41,7 +25,6 @@ function parseCallbackData(
   const [prefix, checkinId, rawResponse] = parts as [string, string, string];
   if (prefix !== 'checkin') return null;
   if (!VALID_RESPONSES.has(rawResponse)) return null;
-  // Validate UUID shape (basic)
   if (!/^[0-9a-f-]{36}$/.test(checkinId)) return null;
   return { checkinId, response: rawResponse as CheckinResponse };
 }
@@ -59,7 +42,6 @@ export async function handleCheckinCallback(
 
   const { checkinId, response } = parsed;
 
-  // Load the pending_checkin
   const { data: checkin, error: fetchError } = await db
     .from('pending_checkins')
     .select('id, trello_card_id, member_id, telegram_message_id, status')
@@ -71,7 +53,6 @@ export async function handleCheckinCallback(
     return;
   }
 
-  // Already settled — idempotent guard
   if (checkin.status === 'resolved') {
     await bot.answerCallbackQuery(callbackQueryId, '✅ Already answered — thanks!');
     return;
@@ -81,7 +62,6 @@ export async function handleCheckinCallback(
     return;
   }
 
-  // Load the team member for display name + DM chat id
   const { data: member } = await db
     .from('team_members')
     .select('display_name, telegram_user_id')
@@ -90,7 +70,6 @@ export async function handleCheckinCallback(
 
   const memberName = member?.display_name ?? 'Team member';
 
-  // Resolve the row atomically — ignore conflict if somehow already resolved
   const { error: updateError } = await db
     .from('pending_checkins')
     .update({
@@ -99,7 +78,7 @@ export async function handleCheckinCallback(
       resolved_at: new Date().toISOString(),
     })
     .eq('id', checkinId)
-    .in('status', ['awaiting', 'reminded']); // only update if still open
+    .in('status', ['awaiting', 'reminded']);
 
   if (updateError) {
     console.error('[checkin] Failed to update pending_checkin:', updateError);
@@ -107,7 +86,6 @@ export async function handleCheckinCallback(
     return;
   }
 
-  // Post Trello comment
   try {
     const trello = createTrelloWriteClient();
     const dateStr = new Date().toLocaleDateString('en-GB', {
@@ -117,35 +95,25 @@ export async function handleCheckinCallback(
     });
     await trello.addComment(
       checkin.trello_card_id,
-      `[MeeBo check-in] ${memberName} reported: ${RESPONSE_LABEL[response]} on ${dateStr}`,
+      formatCheckinTrelloComment(memberName, response, dateStr),
     );
   } catch (err) {
-    // Non-fatal — log and continue
     console.error('[checkin] Failed to post Trello comment:', err);
   }
 
-  // Edit original DM to confirm and remove buttons
   if (checkin.telegram_message_id && member?.telegram_user_id) {
-    const editText =
-      `${RESPONSE_EMOJI[response]} <b>Recorded: ${escape(RESPONSE_LABEL[response])}</b>\n\n` +
-      `Your Trello card has been updated. Thank you, ${escape(memberName)}!`;
     try {
       await bot.editMessageText(
         member.telegram_user_id,
         Number(checkin.telegram_message_id),
-        editText,
+        formatCheckinConfirmation(response, memberName),
       );
     } catch (err) {
-      // Editing can fail if the message is too old or already edited — non-fatal
       console.warn('[checkin] Could not edit prompt message:', err);
     }
   }
 
-  // Acknowledge the button tap
-  await bot.answerCallbackQuery(
-    callbackQueryId,
-    `${RESPONSE_EMOJI[response]} ${RESPONSE_LABEL[response]} — logged!`,
-  );
+  await bot.answerCallbackQuery(callbackQueryId, formatCheckinCallbackAck(response));
 
   console.log(
     `[checkin] ${memberName} responded: ${response} for card ${checkin.trello_card_id}`,

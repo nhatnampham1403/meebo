@@ -5,7 +5,8 @@
  */
 import { db } from '../lib/db';
 import { createBot, requireGroupChatId } from '../lib/telegram';
-import { createTrelloClient, daysFromNow, formatDate } from '../lib/trello';
+import { createTrelloClient, daysFromNow } from '../lib/trello';
+import { formatDeadlineAlert } from '../lib/messages';
 
 async function alreadySentCard(cardId: string): Promise<boolean> {
   const today = new Date().toISOString().split('T')[0]!;
@@ -30,10 +31,6 @@ async function loadMemberMap(): Promise<Map<string, string>> {
   return map;
 }
 
-function escape(t: string): string {
-  return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
 export async function runAlerts(): Promise<void> {
   const JOB = 'alerts';
   console.log(`[${JOB}] Starting`);
@@ -50,19 +47,12 @@ export async function runAlerts(): Promise<void> {
   });
 
   let sent = 0;
+  const bot = createBot();
 
   for (const { card, listName, ownerNames } of upcoming) {
     if (await alreadySentCard(card.id)) continue;
 
-    const o = ownerNames.length ? ` · <i>${ownerNames.map(escape).join(', ')}</i>` : '';
-    const when = daysFromNow(card.due!) <= 1 ? 'TODAY' : 'TOMORROW';
-    const msg =
-      `⚠️ <b>Due ${when}</b>\n` +
-      `<a href="${card.shortUrl}">${escape(card.name)}</a> [${escape(listName)}]${o}\n` +
-      `📅 ${formatDate(card.due!)}`;
-
-    const bot = createBot();
-    await bot.sendMessage(groupId, msg);
+    await bot.sendMessage(groupId, formatDeadlineAlert(card, listName, ownerNames));
     await markCard(card.id);
     sent++;
   }

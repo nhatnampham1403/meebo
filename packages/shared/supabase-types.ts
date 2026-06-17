@@ -28,6 +28,8 @@ export interface Database {
           extracted_at: string;
           reviewed_at: string | null;
           original_source_text: string;
+          meeting_id: string | null;
+          source_channel: string;
         };
         Insert: {
           id?: string;
@@ -53,6 +55,8 @@ export interface Database {
           extracted_at?: string;
           reviewed_at?: string | null;
           original_source_text: string;
+          meeting_id?: string | null;
+          source_channel?: string;
         };
         Update: {
           id?: string;
@@ -78,6 +82,38 @@ export interface Database {
           extracted_at?: string;
           reviewed_at?: string | null;
           original_source_text?: string;
+          meeting_id?: string | null;
+          source_channel?: string;
+        };
+        Relationships: [];
+      };
+      meetings: {
+        Row: {
+          id: string;
+          created_at: string;
+          source_type: 'sprint_meeting' | 'customer_meeting';
+          source_channel: 'web' | 'telegram';
+          raw_transcript: string;
+          summary: string | null;
+          participants: string[] | null;
+        };
+        Insert: {
+          id?: string;
+          created_at?: string;
+          source_type: 'sprint_meeting' | 'customer_meeting';
+          source_channel?: 'web' | 'telegram';
+          raw_transcript: string;
+          summary?: string | null;
+          participants?: string[] | null;
+        };
+        Update: {
+          id?: string;
+          created_at?: string;
+          source_type?: 'sprint_meeting' | 'customer_meeting';
+          source_channel?: 'web' | 'telegram';
+          raw_transcript?: string;
+          summary?: string | null;
+          participants?: string[] | null;
         };
         Relationships: [];
       };

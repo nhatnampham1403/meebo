@@ -7,6 +7,7 @@
 import { db } from '../lib/db';
 import { createBot, requireGroupChatId } from '../lib/telegram';
 import { createTrelloClient, daysAgo } from '../lib/trello';
+import { formatVendorFollowup } from '../lib/messages';
 
 async function alreadySentCard(cardId: string): Promise<boolean> {
   const today = new Date().toISOString().split('T')[0]!;
@@ -31,15 +32,10 @@ async function loadMemberMap(): Promise<Map<string, string>> {
   return map;
 }
 
-function escape(t: string): string {
-  return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
 export async function runVendor(): Promise<void> {
   const JOB = 'vendor';
   console.log(`[${JOB}] Starting`);
 
-  // Load all approved drafts with external_party set
   const { data: drafts } = await db
     .from('task_drafts')
     .select('trello_card_id, external_party, extracted_title')
@@ -65,21 +61,18 @@ export async function runVendor(): Promise<void> {
   );
 
   let sent = 0;
+  const bot = createBot();
 
   for (const { card, listName, ownerNames } of waiting) {
     if (await alreadySentCard(card.id)) continue;
 
     const ext = externalMap.get(card.id) ?? 'external party';
     const idle = Math.round(daysAgo(card.dateLastActivity));
-    const o = ownerNames.length ? ` · <i>${ownerNames.map(escape).join(', ')}</i>` : '';
 
-    const msg =
-      `📦 <b>Follow-up needed</b>\n` +
-      `<a href="${card.shortUrl}">${escape(card.name)}</a> [${escape(listName)}]${o}\n` +
-      `Waiting on <b>${escape(ext)}</b> · ${idle}d no activity`;
-
-    const bot = createBot();
-    await bot.sendMessage(groupId, msg);
+    await bot.sendMessage(
+      groupId,
+      formatVendorFollowup(card, listName, ownerNames, ext, idle),
+    );
     await markCard(card.id);
     sent++;
   }

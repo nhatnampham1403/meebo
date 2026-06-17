@@ -13,3 +13,6 @@ export { withRetry } from './retry';
 
 export { draftToTrelloCard } from './trello-mapping';
 export type { TrelloCardFields } from './trello-mapping';
+
+export { extractTasksFromNotes } from './extraction';
+export type { TeamContext, TeamMemberContext, ExtractOptions } from './extraction';
