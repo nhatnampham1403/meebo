@@ -9,6 +9,7 @@ const PatchSchema = z.object({
   extracted_title: z.string().min(1).optional(),
   project: z.string().nullable().optional(),
   owner: z.string().nullable().optional(),
+  trello_member_id: z.string().nullable().optional(),
   due_date: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
