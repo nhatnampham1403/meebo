@@ -8,6 +8,16 @@ type DraftRow = Database['public']['Tables']['task_drafts']['Row'];
 type ReviewStatus = DraftRow['review_status'];
 type Priority = DraftRow['priority'];
 
+interface TeamMember {
+  id: string;
+  display_name: string;
+  email: string | null;
+  role: string;
+  skills: string[];
+  trello_member_id: string;
+  is_active: boolean;
+}
+
 const PRIORITY_COLORS: Record<Priority, string> = {
   high: '#dc2626',
   medium: '#d97706',
@@ -34,61 +44,237 @@ function canApprove(draft: DraftRow): boolean {
   return (
     draft.review_status !== 'approved' &&
     draft.review_status !== 'rejected' &&
+    !draft.needs_clarification &&
     !!draft.owner?.trim() &&
     !!draft.due_date
   );
 }
 
+function inputStyle(disabled: boolean): React.CSSProperties {
+  return {
+    width: '100%', border: '1px solid #e2e8f0', borderRadius: 4, padding: '4px 8px',
+    fontSize: 13, fontFamily: 'inherit', background: disabled ? '#f8fafc' : '#fff',
+    color: disabled ? '#64748b' : '#1e293b', cursor: disabled ? 'default' : 'text',
+    outline: 'none', boxSizing: 'border-box',
+  };
+}
+
+function selectStyle(disabled: boolean): React.CSSProperties {
+  return {
+    width: '100%', border: '1px solid #e2e8f0', borderRadius: 4, padding: '4px 8px',
+    fontSize: 13, fontFamily: 'inherit', background: disabled ? '#f8fafc' : '#fff',
+    color: disabled ? '#64748b' : '#1e293b', cursor: disabled ? 'default' : 'pointer',
+    outline: 'none', boxSizing: 'border-box',
+  };
+}
+
+// ─── Feature 2: Owner cell with team-member dropdown + "Other" Trello lookup ──
+
+function OwnerCell({
+  draft,
+  teamMembers,
+  isLocked,
+  onUpdate,
+}: {
+  draft: DraftRow;
+  teamMembers: TeamMember[];
+  isLocked: boolean;
+  onUpdate: (id: string, fields: Partial<DraftRow>) => Promise<void>;
+}) {
+  const matchedMember = teamMembers.find((m) => m.display_name === draft.owner);
+  const startInOther = Boolean(draft.owner && !matchedMember);
+
+  const [mode, setMode] = useState<'select' | 'other'>(startInOther ? 'other' : 'select');
+  const [otherInput, setOtherInput] = useState(startInOther ? (draft.owner ?? '') : '');
+  const [resolve, setResolve] = useState<{
+    status: 'idle' | 'loading' | 'found' | 'error';
+    message?: string;
+  }>({ status: 'idle' });
+
+  if (isLocked) {
+    return <span style={{ fontSize: 13, color: '#64748b' }}>{draft.owner ?? '—'}</span>;
+  }
+
+  const selectValue = mode === 'other' ? '__other__' : (matchedMember?.display_name ?? '');
+
+  async function handleSelectChange(val: string) {
+    if (val === '__other__') {
+      setMode('other');
+      setOtherInput('');
+      setResolve({ status: 'idle' });
+      return;
+    }
+    setMode('select');
+    const member = teamMembers.find((m) => m.display_name === val);
+    await onUpdate(draft.id, {
+      owner: member?.display_name ?? null,
+      trello_member_id: member?.trello_member_id ?? null,
+    });
+  }
+
+  async function handleOtherBlur() {
+    const q = otherInput.trim();
+    if (!q || resolve.status === 'found') return;
+    setResolve({ status: 'loading' });
+    try {
+      const res = await fetch('/api/resolve-trello-member', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: q }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setResolve({ status: 'error', message: 'Trello member not found' });
+        return;
+      }
+      setResolve({ status: 'found', message: json.full_name as string });
+      await onUpdate(draft.id, {
+        owner: json.full_name as string,
+        trello_member_id: json.trello_member_id as string,
+      });
+    } catch {
+      setResolve({ status: 'error', message: 'Lookup failed' });
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 150 }}>
+      <select
+        value={selectValue}
+        onChange={(e) => void handleSelectChange(e.target.value)}
+        style={selectStyle(false)}
+      >
+        <option value="">— Unassigned —</option>
+        {teamMembers.map((m) => (
+          <option key={m.id} value={m.display_name}>{m.display_name}</option>
+        ))}
+        <option value="__other__">— Other... —</option>
+      </select>
+      {mode === 'other' && (
+        <>
+          <input
+            value={otherInput}
+            onChange={(e) => {
+              setOtherInput(e.target.value);
+              setResolve({ status: 'idle' });
+            }}
+            onBlur={() => void handleOtherBlur()}
+            placeholder="Trello username or email"
+            style={{ ...inputStyle(false), fontSize: 12 }}
+          />
+          {resolve.status === 'loading' && (
+            <span style={{ fontSize: 11, color: '#94a3b8' }}>Looking up…</span>
+          )}
+          {resolve.status === 'found' && (
+            <span style={{ fontSize: 11, color: '#16a34a' }}>✓ {resolve.message}</span>
+          )}
+          {resolve.status === 'error' && (
+            <span style={{ fontSize: 11, color: '#dc2626' }}>{resolve.message}</span>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Main page ────────────────────────────────────────────────────────────────
+
 type Filter = 'pending' | 'all';
 
 export default function Page() {
+  // Extract state
   const [notes, setNotes] = useState('');
   const [sourceType, setSourceType] = useState<'sprint_meeting' | 'customer_meeting'>('sprint_meeting');
+  const [pdfFile, setPdfFile] = useState<File | null>(null);           // Feature 3
   const [extracting, setExtracting] = useState(false);
   const [extractError, setExtractError] = useState<string | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
+
+  // Draft state
   const [allDrafts, setAllDrafts] = useState<DraftRow[]>([]);
   const [filter, setFilter] = useState<Filter>('pending');
   const [approving, setApproving] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<Record<string, { ok: boolean; msg: string }>>({});
 
+  // Feature 1 — bulk actions
+  const [approvingAll, setApprovingAll] = useState(false);
+  const [rejectingAll, setRejectingAll] = useState(false);
+  const [bulkSkipCount, setBulkSkipCount] = useState<number | null>(null);
+
+  // Feature 2 — team members for owner dropdown
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+
+  // ── Load data on mount ──────────────────────────────────────────────────────
   const loadDrafts = useCallback(async () => {
     try {
       const res = await fetch('/api/drafts');
       if (!res.ok) return;
       const data: DraftRow[] = await res.json();
       setAllDrafts(data);
-    } catch {
-      // silently fail on load
-    }
+    } catch { /* silently fail */ }
   }, []);
 
-  useEffect(() => { void loadDrafts(); }, [loadDrafts]);
+  const loadConfig = useCallback(async () => {
+    try {
+      const res = await fetch('/api/config');
+      if (!res.ok) return;
+      const data = await res.json();
+      const members: TeamMember[] = (data.teamMembers ?? []) as TeamMember[];
+      setTeamMembers(members.filter((m) => m.is_active));
+    } catch { /* silently fail */ }
+  }, []);
 
+  useEffect(() => {
+    void loadDrafts();
+    void loadConfig();
+  }, [loadDrafts, loadConfig]);
+
+  // ── Derived values ──────────────────────────────────────────────────────────
   const drafts = filter === 'pending'
-    ? allDrafts.filter(d => d.review_status === 'pending' || d.review_status === 'needs_clarification')
+    ? allDrafts.filter((d) => d.review_status === 'pending' || d.review_status === 'needs_clarification')
     : allDrafts;
 
-  const pendingCount = allDrafts.filter(d => d.review_status === 'pending' || d.review_status === 'needs_clarification').length;
-  const approvedCount = allDrafts.filter(d => d.review_status === 'approved').length;
+  const pendingCount = allDrafts.filter(
+    (d) => d.review_status === 'pending' || d.review_status === 'needs_clarification',
+  ).length;
+  const approvedCount = allDrafts.filter((d) => d.review_status === 'approved').length;
 
+  // ── Helpers ─────────────────────────────────────────────────────────────────
+  function setMsg(id: string, ok: boolean, msg: string) {
+    setActionMsg((prev) => ({ ...prev, [id]: { ok, msg } }));
+  }
+  function clearMsg(id: string) {
+    setActionMsg((prev) => { const n = { ...prev }; delete n[id]; return n; });
+  }
+
+  // ── Extract ─────────────────────────────────────────────────────────────────
   async function handleExtract() {
-    if (!notes.trim()) return;
+    if (!notes.trim() && !pdfFile) return;
     setExtracting(true);
     setExtractError(null);
     setSummary(null);
     try {
-      const res = await fetch('/api/extract', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source_text: notes, source_type: sourceType }),
-      });
+      let res: Response;
+      if (pdfFile) {
+        // Feature 3: multipart upload
+        const form = new FormData();
+        form.append('pdf_file', pdfFile);
+        form.append('source_type', sourceType);
+        res = await fetch('/api/extract', { method: 'POST', body: form });
+      } else {
+        res = await fetch('/api/extract', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ source_text: notes, source_type: sourceType }),
+        });
+      }
       const json = await res.json();
       if (!res.ok) { setExtractError(json.error ?? 'Extraction failed'); return; }
       setSummary(json.summary);
-      setAllDrafts(prev => [...(json.drafts as DraftRow[]), ...prev]);
+      setAllDrafts((prev) => [...(json.drafts as DraftRow[]), ...prev]);
       setNotes('');
+      setPdfFile(null);
     } catch (err) {
       setExtractError(String(err));
     } finally {
@@ -96,8 +282,9 @@ export default function Page() {
     }
   }
 
+  // ── Single-row field change (optimistic) ────────────────────────────────────
   async function handleFieldChange(id: string, field: string, value: string | null) {
-    setAllDrafts(prev => prev.map(d => d.id === id ? { ...d, [field]: value } : d));
+    setAllDrafts((prev) => prev.map((d) => d.id === id ? { ...d, [field]: value } : d));
     try {
       await fetch(`/api/drafts/${id}`, {
         method: 'PATCH',
@@ -107,6 +294,19 @@ export default function Page() {
     } catch { /* optimistic — ignore */ }
   }
 
+  // Feature 2: multi-field update (owner + trello_member_id)
+  async function handleFieldsUpdate(id: string, fields: Partial<DraftRow>) {
+    setAllDrafts((prev) => prev.map((d) => d.id === id ? { ...d, ...fields } : d));
+    try {
+      await fetch(`/api/drafts/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fields),
+      });
+    } catch { /* optimistic — ignore */ }
+  }
+
+  // ── Single approve ───────────────────────────────────────────────────────────
   async function handleApprove(draft: DraftRow) {
     setApproving(draft.id);
     clearMsg(draft.id);
@@ -118,8 +318,8 @@ export default function Page() {
       });
       const json = await res.json();
       if (!res.ok) { setMsg(draft.id, false, json.error ?? 'Approval failed'); return; }
-      setAllDrafts(prev => prev.map(d =>
-        d.id === draft.id ? { ...d, review_status: 'approved', trello_card_url: json.card_url ?? d.trello_card_url } : d
+      setAllDrafts((prev) => prev.map((d) =>
+        d.id === draft.id ? { ...d, review_status: 'approved', trello_card_url: json.card_url ?? d.trello_card_url } : d,
       ));
       setMsg(draft.id, true, json.status === 'already_approved' ? 'Already approved' : '✓ Card created');
     } catch (err) {
@@ -129,6 +329,7 @@ export default function Page() {
     }
   }
 
+  // ── Single reject ────────────────────────────────────────────────────────────
   async function handleReject(draft: DraftRow) {
     if (!confirm(`Reject "${draft.extracted_title}"? This cannot be undone.`)) return;
     setRejecting(draft.id);
@@ -144,8 +345,8 @@ export default function Page() {
         setMsg(draft.id, false, json.error ?? 'Reject failed');
         return;
       }
-      setAllDrafts(prev => prev.map(d =>
-        d.id === draft.id ? { ...d, review_status: 'rejected' } : d
+      setAllDrafts((prev) => prev.map((d) =>
+        d.id === draft.id ? { ...d, review_status: 'rejected' } : d,
       ));
     } catch (err) {
       setMsg(draft.id, false, String(err));
@@ -154,15 +355,85 @@ export default function Page() {
     }
   }
 
-  function setMsg(id: string, ok: boolean, msg: string) {
-    setActionMsg(prev => ({ ...prev, [id]: { ok, msg } }));
+  // ── Feature 1: Approve All ────────────────────────────────────────────────────
+  async function handleApproveAll() {
+    setBulkSkipCount(null);
+    const activeDrafts = drafts.filter(
+      (d) => d.review_status !== 'approved' && d.review_status !== 'rejected',
+    );
+    const toApprove = activeDrafts.filter((d) => canApprove(d));
+    const skipped = activeDrafts.filter((d) => d.needs_clarification).length;
+
+    if (toApprove.length === 0) {
+      if (skipped > 0) setBulkSkipCount(skipped);
+      return;
+    }
+
+    setApprovingAll(true);
+    for (const draft of toApprove) {
+      setApproving(draft.id);
+      clearMsg(draft.id);
+      try {
+        const res = await fetch('/api/approve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ draft_id: draft.id }),
+        });
+        const json = await res.json();
+        if (res.ok) {
+          setAllDrafts((prev) => prev.map((d) =>
+            d.id === draft.id
+              ? { ...d, review_status: 'approved', trello_card_url: json.card_url ?? d.trello_card_url }
+              : d,
+          ));
+          setMsg(draft.id, true, json.status === 'already_approved' ? 'Already approved' : '✓ Card created');
+        } else {
+          setMsg(draft.id, false, json.error ?? 'Approval failed');
+        }
+      } catch (err) {
+        setMsg(draft.id, false, String(err));
+      }
+    }
+    setApproving(null);
+    setApprovingAll(false);
+    if (skipped > 0) setBulkSkipCount(skipped);
   }
-  function clearMsg(id: string) {
-    setActionMsg(prev => { const n = { ...prev }; delete n[id]; return n; });
+
+  // ── Feature 1: Reject All ─────────────────────────────────────────────────────
+  async function handleRejectAll() {
+    const activeDrafts = drafts.filter(
+      (d) => d.review_status !== 'approved' && d.review_status !== 'rejected',
+    );
+    if (activeDrafts.length === 0) return;
+    if (!confirm(`Reject all ${activeDrafts.length} pending task(s)? This cannot be undone.`)) return;
+
+    setRejectingAll(true);
+    for (const draft of activeDrafts) {
+      try {
+        const res = await fetch(`/api/drafts/${draft.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ review_status: 'rejected' }),
+        });
+        if (res.ok) {
+          setAllDrafts((prev) => prev.map((d) =>
+            d.id === draft.id ? { ...d, review_status: 'rejected' } : d,
+          ));
+        }
+      } catch { /* continue */ }
+    }
+    setRejectingAll(false);
   }
+
+  // ── Render ────────────────────────────────────────────────────────────────────
+  const canExtract = !extracting && (notes.trim().length > 0 || pdfFile !== null);
+  const activePendingCount = drafts.filter(
+    (d) => d.review_status !== 'approved' && d.review_status !== 'rejected',
+  ).length;
 
   return (
     <div style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: 'system-ui, sans-serif' }}>
+
       {/* Header */}
       <header style={{ background: '#1e293b', color: '#f8fafc', padding: '0 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 56 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -178,24 +449,51 @@ export default function Page() {
 
       <main style={{ maxWidth: 1300, margin: '0 auto', padding: '32px 24px' }}>
 
-        {/* Capture box */}
+        {/* ── Capture box ────────────────────────────────────────────────────── */}
         <section style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: 24, marginBottom: 24, boxShadow: '0 1px 3px rgba(0,0,0,.06)' }}>
           <h2 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 600, color: '#1e293b' }}>Paste Meeting Notes</h2>
           <select
             value={sourceType}
-            onChange={e => setSourceType(e.target.value as typeof sourceType)}
+            onChange={(e) => setSourceType(e.target.value as typeof sourceType)}
             style={{ border: '1px solid #cbd5e1', borderRadius: 6, padding: '8px 12px', fontSize: 14, background: '#fff', cursor: 'pointer', marginBottom: 12 }}
           >
             <option value="sprint_meeting">Sprint Meeting</option>
             <option value="customer_meeting">Customer Meeting</option>
           </select>
+
           <textarea
             value={notes}
-            onChange={e => setNotes(e.target.value)}
+            onChange={(e) => { setNotes(e.target.value); if (e.target.value) setPdfFile(null); }}
             placeholder="Paste meeting notes here — Vietnamese or English, any format…"
             rows={6}
             style={{ display: 'block', width: '100%', border: '1px solid #cbd5e1', borderRadius: 8, padding: 12, fontSize: 14, resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box', outline: 'none' }}
           />
+
+          {/* Feature 3 — PDF upload */}
+          <div style={{ marginTop: 12, padding: '14px 16px', border: '1px dashed #cbd5e1', borderRadius: 8, background: pdfFile ? '#f0fdf4' : '#f8fafc', textAlign: 'center' }}>
+            <p style={{ margin: '0 0 8px', fontSize: 13, color: '#64748b' }}>— or upload a PDF —</p>
+            <input
+              type="file"
+              accept=".pdf"
+              onChange={(e) => {
+                const file = e.target.files?.[0] ?? null;
+                setPdfFile(file);
+                if (file) setNotes('');
+                e.target.value = '';
+              }}
+              style={{ fontSize: 13, cursor: 'pointer' }}
+            />
+            {pdfFile && (
+              <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                <span style={{ fontSize: 13, color: '#16a34a', fontWeight: 500 }}>📄 {pdfFile.name}</span>
+                <button
+                  onClick={() => setPdfFile(null)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', fontSize: 12, padding: '0 4px' }}
+                >✕</button>
+              </div>
+            )}
+          </div>
+
           {extractError && (
             <p style={{ color: '#dc2626', fontSize: 13, margin: '8px 0 0', padding: '8px 12px', background: '#fee2e2', borderRadius: 6 }}>
               {extractError}
@@ -203,14 +501,14 @@ export default function Page() {
           )}
           <button
             onClick={() => void handleExtract()}
-            disabled={extracting || !notes.trim()}
-            style={{ marginTop: 12, background: extracting || !notes.trim() ? '#94a3b8' : '#2563eb', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 24px', fontSize: 14, fontWeight: 600, cursor: extracting || !notes.trim() ? 'not-allowed' : 'pointer' }}
+            disabled={!canExtract}
+            style={{ marginTop: 12, background: canExtract ? '#2563eb' : '#94a3b8', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 24px', fontSize: 14, fontWeight: 600, cursor: canExtract ? 'pointer' : 'not-allowed' }}
           >
             {extracting ? 'Extracting…' : 'Extract Tasks'}
           </button>
         </section>
 
-        {/* Summary banner */}
+        {/* ── Summary banner ─────────────────────────────────────────────────── */}
         {summary && (
           <div style={{ background: '#fefce8', border: '1px solid #fde68a', borderRadius: 10, padding: '14px 18px', marginBottom: 24, fontSize: 14, color: '#713f12', lineHeight: 1.6 }}>
             <strong style={{ display: 'block', marginBottom: 4, fontSize: 13, color: '#92400e' }}>Meeting Summary</strong>
@@ -218,17 +516,18 @@ export default function Page() {
           </div>
         )}
 
-        {/* Draft table */}
+        {/* ── Draft table ─────────────────────────────────────────────────────── */}
         {allDrafts.length > 0 && (
           <section style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,.06)' }}>
+
             {/* Table header bar */}
-            <div style={{ padding: '14px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <div style={{ padding: '14px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
               <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: '#1e293b' }}>Task Drafts</h2>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 12, color: '#94a3b8' }}>Click cells to edit • Approve requires owner + due date</span>
                 {/* Filter toggle */}
                 <div style={{ display: 'flex', background: '#f1f5f9', borderRadius: 8, padding: 3, gap: 2 }}>
-                  {(['pending', 'all'] as Filter[]).map(f => (
+                  {(['pending', 'all'] as Filter[]).map((f) => (
                     <button
                       key={f}
                       onClick={() => setFilter(f)}
@@ -246,11 +545,46 @@ export default function Page() {
               </div>
             </div>
 
+            {/* Feature 1 — Bulk action bar */}
+            {activePendingCount > 0 && (
+              <div style={{ padding: '10px 20px', borderBottom: '1px solid #f1f5f9', background: '#f8fafc', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12, color: '#64748b', marginRight: 4 }}>Bulk actions:</span>
+                <button
+                  onClick={() => void handleApproveAll()}
+                  disabled={approvingAll || rejectingAll}
+                  style={{
+                    background: approvingAll ? '#94a3b8' : '#16a34a',
+                    color: '#fff', border: 'none', borderRadius: 6, padding: '5px 14px',
+                    fontSize: 12, fontWeight: 600, cursor: approvingAll ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {approvingAll ? 'Approving…' : '✅ Approve All'}
+                </button>
+                <button
+                  onClick={() => void handleRejectAll()}
+                  disabled={approvingAll || rejectingAll}
+                  style={{
+                    background: rejectingAll ? '#94a3b8' : '#fff',
+                    color: rejectingAll ? '#fff' : '#dc2626',
+                    border: '1px solid #fca5a5', borderRadius: 6, padding: '5px 14px',
+                    fontSize: 12, fontWeight: 600, cursor: rejectingAll ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {rejectingAll ? 'Rejecting…' : '❌ Reject All'}
+                </button>
+                {bulkSkipCount !== null && bulkSkipCount > 0 && (
+                  <span style={{ fontSize: 12, color: '#92400e', background: '#fef3c7', padding: '4px 10px', borderRadius: 6 }}>
+                    {bulkSkipCount} task{bulkSkipCount !== 1 ? 's' : ''} skipped — needs clarification. Review them individually.
+                  </span>
+                )}
+              </div>
+            )}
+
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead>
                   <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                    {['Title', 'Project', 'Owner', 'Due Date', 'Priority', 'Status', 'Actions'].map(h => (
+                    {['Title', 'Project', 'Owner', 'Due Date', 'Priority', 'Status', 'Actions'].map((h) => (
                       <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#475569', whiteSpace: 'nowrap' }}>{h}</th>
                     ))}
                   </tr>
@@ -259,10 +593,10 @@ export default function Page() {
                   {drafts.length === 0 ? (
                     <tr>
                       <td colSpan={7} style={{ padding: '32px', textAlign: 'center', color: '#94a3b8' }}>
-                        No pending drafts — switch to "All" to see approved/rejected.
+                        No pending drafts — switch to &quot;All&quot; to see approved/rejected.
                       </td>
                     </tr>
-                  ) : drafts.map(draft => {
+                  ) : drafts.map((draft) => {
                     const isLocked = draft.review_status === 'approved' || draft.review_status === 'rejected';
                     const isClarification = draft.review_status === 'needs_clarification';
                     const isApproved = draft.review_status === 'approved';
@@ -272,40 +606,42 @@ export default function Page() {
 
                     return (
                       <tr key={draft.id} style={{ background: rowBg, borderBottom: '1px solid #f1f5f9', opacity: isRejected ? 0.65 : 1 }}>
+
                         {/* Title */}
                         <td style={{ padding: '8px 12px', minWidth: 200, maxWidth: 280 }}>
                           <input
                             key={draft.id + draft.extracted_title}
                             defaultValue={draft.extracted_title}
                             disabled={isLocked}
-                            onBlur={e => void handleFieldChange(draft.id, 'extracted_title', e.target.value)}
+                            onBlur={(e) => void handleFieldChange(draft.id, 'extracted_title', e.target.value)}
                             style={inputStyle(isLocked)}
                           />
                         </td>
+
                         {/* Project */}
                         <td style={{ padding: '8px 12px', minWidth: 140 }}>
                           <input
                             key={draft.id + (draft.project ?? '')}
                             defaultValue={draft.project ?? ''}
                             disabled={isLocked}
-                            onBlur={e => void handleFieldChange(draft.id, 'project', e.target.value || null)}
+                            onBlur={(e) => void handleFieldChange(draft.id, 'project', e.target.value || null)}
                             style={inputStyle(isLocked)}
                           />
                         </td>
-                        {/* Owner */}
-                        <td style={{ padding: '8px 12px', minWidth: 120 }}>
-                          <input
-                            key={draft.id + (draft.owner ?? '')}
-                            defaultValue={draft.owner ?? ''}
-                            disabled={isLocked}
-                            placeholder={isLocked ? '' : 'Required'}
-                            onBlur={e => void handleFieldChange(draft.id, 'owner', e.target.value || null)}
-                            style={{
-                              ...inputStyle(isLocked),
-                              border: !draft.owner && !isLocked ? '1px solid #fca5a5' : inputStyle(isLocked).border,
-                            }}
+
+                        {/* Owner — Feature 2 dropdown */}
+                        <td style={{ padding: '8px 12px', minWidth: 160 }}>
+                          <OwnerCell
+                            draft={draft}
+                            teamMembers={teamMembers}
+                            isLocked={isLocked}
+                            onUpdate={handleFieldsUpdate}
                           />
+                          {!draft.owner && !isLocked && (
+                            <span style={{ fontSize: 10, color: '#f59e0b', display: 'block', marginTop: 2 }}>Required for approve</span>
+                          )}
                         </td>
+
                         {/* Due Date */}
                         <td style={{ padding: '8px 12px', minWidth: 130 }}>
                           <input
@@ -313,20 +649,21 @@ export default function Page() {
                             type="date"
                             defaultValue={draft.due_date ?? ''}
                             disabled={isLocked}
-                            onBlur={e => void handleFieldChange(draft.id, 'due_date', e.target.value || null)}
+                            onBlur={(e) => void handleFieldChange(draft.id, 'due_date', e.target.value || null)}
                             style={{
                               ...inputStyle(isLocked),
                               border: !draft.due_date && !isLocked ? '1px solid #fca5a5' : inputStyle(isLocked).border,
                             }}
                           />
                         </td>
+
                         {/* Priority */}
                         <td style={{ padding: '8px 12px' }}>
                           <select
                             key={draft.id + draft.priority}
                             defaultValue={draft.priority}
                             disabled={isLocked}
-                            onChange={e => void handleFieldChange(draft.id, 'priority', e.target.value)}
+                            onChange={(e) => void handleFieldChange(draft.id, 'priority', e.target.value)}
                             style={{ border: '1px solid #e2e8f0', borderRadius: 4, padding: '3px 6px', fontSize: 12, color: PRIORITY_COLORS[draft.priority], fontWeight: 600, background: isLocked ? '#f8fafc' : '#fff', cursor: isLocked ? 'default' : 'pointer' }}
                           >
                             <option value="low">Low</option>
@@ -334,10 +671,12 @@ export default function Page() {
                             <option value="high">High</option>
                           </select>
                         </td>
+
                         {/* Status */}
                         <td style={{ padding: '8px 12px' }}>
                           <Badge status={draft.review_status} />
                         </td>
+
                         {/* Actions */}
                         <td style={{ padding: '8px 12px', whiteSpace: 'nowrap' }}>
                           {isApproved && (
@@ -345,22 +684,20 @@ export default function Page() {
                               ? <a href={draft.trello_card_url} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', fontSize: 12 }}>View card ↗</a>
                               : <span style={{ color: '#94a3b8', fontSize: 12 }}>Approved</span>
                           )}
-                          {isRejected && (
-                            <span style={{ color: '#94a3b8', fontSize: 12 }}>Rejected</span>
-                          )}
+                          {isRejected && <span style={{ color: '#94a3b8', fontSize: 12 }}>Rejected</span>}
                           {!isLocked && (
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                               <button
                                 onClick={() => void handleApprove(draft)}
-                                disabled={!canApprove(draft) || approving === draft.id}
-                                title={!canApprove(draft) ? 'Set owner and due date first' : 'Create Trello card'}
+                                disabled={!canApprove(draft) || approving === draft.id || approvingAll}
+                                title={!canApprove(draft) ? 'Set owner and due date first (no clarification needed)' : 'Create Trello card'}
                                 style={{ background: canApprove(draft) ? '#16a34a' : '#d1d5db', color: '#fff', border: 'none', borderRadius: 6, padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: canApprove(draft) ? 'pointer' : 'not-allowed' }}
                               >
                                 {approving === draft.id ? '…' : 'Approve'}
                               </button>
                               <button
                                 onClick={() => void handleReject(draft)}
-                                disabled={rejecting === draft.id}
+                                disabled={rejecting === draft.id || rejectingAll}
                                 style={{ background: '#fff', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: 6, padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
                               >
                                 {rejecting === draft.id ? '…' : 'Reject'}
@@ -384,19 +721,10 @@ export default function Page() {
 
         {allDrafts.length === 0 && !extracting && (
           <div style={{ textAlign: 'center', padding: '60px 0', color: '#94a3b8', fontSize: 15 }}>
-            No drafts yet — paste meeting notes above to get started.
+            No drafts yet — paste meeting notes above or upload a PDF to get started.
           </div>
         )}
       </main>
     </div>
   );
-}
-
-function inputStyle(disabled: boolean): React.CSSProperties {
-  return {
-    width: '100%', border: '1px solid #e2e8f0', borderRadius: 4, padding: '4px 8px',
-    fontSize: 13, fontFamily: 'inherit', background: disabled ? '#f8fafc' : '#fff',
-    color: disabled ? '#64748b' : '#1e293b', cursor: disabled ? 'default' : 'text',
-    outline: 'none', boxSizing: 'border-box',
-  };
 }
