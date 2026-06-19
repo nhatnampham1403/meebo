@@ -25,6 +25,21 @@ interface TelegramApiResponse<T> {
   description?: string;
 }
 
+interface TelegramFile {
+  file_id: string;
+  file_unique_id: string;
+  file_size?: number;
+  file_path?: string;
+}
+
+export interface TelegramDocument {
+  file_id: string;
+  file_unique_id: string;
+  file_name?: string;
+  mime_type?: string;
+  file_size?: number;
+}
+
 export class TelegramBot {
   private readonly base: string;
 
@@ -50,6 +65,22 @@ export class TelegramBot {
 
   async getMe(): Promise<TelegramUser> {
     return withRetry(() => this.call<TelegramUser>('getMe'));
+  }
+
+  async getFile(fileId: string): Promise<TelegramFile> {
+    return withRetry(() => this.call<TelegramFile>('getFile', { file_id: fileId }));
+  }
+
+  async downloadFile(filePath: string): Promise<Buffer> {
+    return withRetry(async () => {
+      const url = `https://api.telegram.org/file/bot${this.token}/${filePath}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        throw new Error(`Telegram file download failed: ${res.status}`);
+      }
+      const arrayBuffer = await res.arrayBuffer();
+      return Buffer.from(arrayBuffer);
+    });
   }
 
   async sendMessage(

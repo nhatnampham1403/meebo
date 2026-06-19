@@ -3,7 +3,19 @@ import { createBot } from '../lib/telegram';
 import { handleCommand } from './commands';
 import { handleCheckinCallback } from './checkin';
 import { handleCaptureCallback } from './capture-callback';
-import { handleCaptureTranscript, isAwaitingCapture } from './capture';
+import {
+  handleCaptureDocument,
+  handleCaptureTranscript,
+  isAwaitingCapture,
+} from './capture';
+
+export interface TelegramDocument {
+  file_id: string;
+  file_unique_id: string;
+  file_name?: string;
+  mime_type?: string;
+  file_size?: number;
+}
 
 export interface TelegramUpdate {
   update_id: number;
@@ -12,6 +24,7 @@ export interface TelegramUpdate {
     from: { id: number; username?: string; first_name: string };
     chat: { id: number; type: string; title?: string };
     text?: string;
+    document?: TelegramDocument;
     date: number;
   };
   callback_query?: {
@@ -46,11 +59,9 @@ webhookRouter.post('/telegram', async (req: Request, res: Response) => {
     const bot = createBot();
 
     if (update.message) {
-      const { text, chat, from } = update.message;
+      const { text, chat, from, document } = update.message;
 
-      if (!text) return;
-
-      if (text.startsWith('/')) {
+      if (text?.startsWith('/')) {
         const spaceIdx = text.indexOf(' ');
         const rawCommand = spaceIdx === -1 ? text : text.slice(0, spaceIdx);
         const args = spaceIdx === -1 ? '' : text.slice(spaceIdx + 1).trim();
@@ -60,8 +71,17 @@ webhookRouter.post('/telegram', async (req: Request, res: Response) => {
       }
 
       if (isAwaitingCapture(chat.id)) {
-        await handleCaptureTranscript(bot, chat.id, from.id, from.first_name, text);
+        if (document) {
+          await handleCaptureDocument(bot, chat.id, from.id, from.first_name, document);
+          return;
+        }
+        if (text) {
+          await handleCaptureTranscript(bot, chat.id, from.id, from.first_name, text);
+        }
+        return;
       }
+
+      if (!text) return;
     }
 
     if (update.callback_query) {

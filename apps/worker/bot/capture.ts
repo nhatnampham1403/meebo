@@ -5,16 +5,19 @@
 import type { ExtractionResult, TeamContext } from '@trello-optimization/shared';
 import type { Database } from '@trello-optimization/shared';
 import { extractTasksFromNotes } from '@trello-optimization/shared';
-import type { TelegramBot, InlineButton } from '../lib/telegram';
+import type { TelegramBot, TelegramDocument, InlineButton } from '../lib/telegram';
 import { db } from '../lib/db';
 import { createTrelloClient } from '../lib/trello';
 import type { TrelloWorkerClient } from '../lib/trello';
+import { extractTextFromPdf } from '../lib/pdf';
 import {
   formatCaptureNoTasks,
+  formatCapturePdfExtractFailed,
   formatCaptureProcessing,
   formatCapturePrompt,
   formatCaptureSummary,
   formatCaptureTaskLine,
+  formatCaptureUnsupportedDocument,
 } from '../lib/messages';
 
 const MIN_TRANSCRIPT_LENGTH = 10;
@@ -264,6 +267,73 @@ export async function handleCaptureTranscript(
 
   clearSession(chatId);
   await processTranscript(bot, chatId, userId, fromName, text, session.sourceType);
+}
+
+function isPdfDocument(document: TelegramDocument): boolean {
+  if (document.mime_type === 'application/pdf') return true;
+  const name = document.file_name?.toLowerCase() ?? '';
+  return name.endsWith('.pdf');
+}
+
+export async function handleCaptureDocument(
+  bot: TelegramBot,
+  chatId: number,
+  userId: number,
+  fromName: string,
+  document: TelegramDocument,
+): Promise<void> {
+  const session = sessions.get(chatId);
+  if (!session) return;
+
+  if (session.userId !== userId) {
+    await bot.sendMessage(
+      chatId,
+      '⏳ Someone else started a capture here — only they can send the file.',
+    );
+    return;
+  }
+
+  if (!isPdfDocument(document)) {
+    await bot.sendMessage(chatId, formatCaptureUnsupportedDocument());
+    return;
+  }
+
+  let fileBuffer: Buffer;
+  try {
+    const file = await bot.getFile(document.file_id);
+    if (!file.file_path) {
+      throw new Error('Telegram did not return a file path');
+    }
+    fileBuffer = await bot.downloadFile(file.file_path);
+  } catch (err) {
+    console.error('[capture] Failed to download PDF:', err);
+    await bot.sendMessage(chatId, '⚠️ Could not download the file. Try again.');
+    return;
+  }
+
+  let transcript: string;
+  try {
+    transcript = await extractTextFromPdf(fileBuffer);
+  } catch (err) {
+    console.error('[capture] PDF text extraction failed:', err);
+    await bot.sendMessage(chatId, formatCapturePdfExtractFailed());
+    return;
+  }
+
+  if (transcript.length < MIN_TRANSCRIPT_LENGTH) {
+    await bot.sendMessage(
+      chatId,
+      `⚠️ The PDF has too little text (need at least ${MIN_TRANSCRIPT_LENGTH} characters). Try another file or paste the notes.`,
+    );
+    return;
+  }
+
+  console.log(
+    `[capture] PDF from ${fromName} (${userId}), ${document.file_name ?? 'unnamed.pdf'}, ${transcript.length} chars extracted`,
+  );
+
+  clearSession(chatId);
+  await processTranscript(bot, chatId, userId, fromName, transcript, session.sourceType);
 }
 
 async function processTranscript(

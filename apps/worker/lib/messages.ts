@@ -313,10 +313,18 @@ export function formatCapturePrompt(sourceType: 'sprint_meeting' | 'customer_mee
     sourceType === 'customer_meeting' ? 'customer meeting' : 'sprint meeting';
   return (
     `📋 <b>Capture mode</b> (${typeHint})\n\n` +
-    `<b>Reply to this message</b> with your meeting notes.\n` +
-    `(In group chats, plain messages are hidden from the bot unless you reply.)\n\n` +
-    `<i>Tip: /capture customer or /capture sprint — or paste notes in one message after the command.</i>`
+    `<b>Reply to this message</b> with your meeting notes or upload a <b>PDF</b>.\n` +
+    `(In group chats, reply so the bot receives your message.)\n\n` +
+    `<i>Tip: /capture customer or /capture sprint — paste notes in one message, or send a PDF.</i>`
   );
+}
+
+export function formatCaptureUnsupportedDocument(): string {
+  return 'Please send a PDF file. Other formats are not supported yet.';
+}
+
+export function formatCapturePdfExtractFailed(): string {
+  return '⚠️ Could not read text from that PDF. Try a text-based PDF or paste the notes instead.';
 }
 
 export function formatCaptureProcessing(): string {
