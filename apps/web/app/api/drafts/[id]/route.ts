@@ -9,6 +9,7 @@ const PatchSchema = z.object({
   extracted_title: z.string().min(1).optional(),
   project: z.string().nullable().optional(),
   owner: z.string().nullable().optional(),
+  owners: z.array(z.string()).optional(),
   trello_member_id: z.string().nullable().optional(),
   due_date: z
     .string()
