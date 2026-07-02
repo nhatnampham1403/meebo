@@ -46,10 +46,11 @@ function hasOwner(draft: DraftRow): boolean {
 }
 
 function canApprove(draft: DraftRow): boolean {
+  // Gate on review_status (not the needs_clarification boolean column): the
+  // PATCH route flips needs_clarification → pending once owner + due_date are
+  // set, and that promoted status is what should unlock approval.
   return (
-    draft.review_status !== 'approved' &&
-    draft.review_status !== 'rejected' &&
-    !draft.needs_clarification &&
+    draft.review_status === 'pending' &&
     hasOwner(draft) &&
     !!draft.due_date
   );
@@ -293,15 +294,24 @@ export default function Page() {
     }
   }
 
+  // Merge the server's returned row into local state. The PATCH route may flip
+  // review_status (needs_clarification → pending) once owner + due_date are set,
+  // so honoring the response unlocks the Approve button without a refresh.
+  function mergeServerDraft(id: string, updated: Partial<DraftRow> | null) {
+    if (!updated) return;
+    setAllDrafts((prev) => prev.map((d) => d.id === id ? { ...d, ...updated } : d));
+  }
+
   // ── Single-row field change (optimistic) ────────────────────────────────────
   async function handleFieldChange(id: string, field: string, value: string | null) {
     setAllDrafts((prev) => prev.map((d) => d.id === id ? { ...d, [field]: value } : d));
     try {
-      await fetch(`/api/drafts/${id}`, {
+      const res = await fetch(`/api/drafts/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ [field]: value }),
       });
+      if (res.ok) mergeServerDraft(id, await res.json());
     } catch { /* optimistic — ignore */ }
   }
 
@@ -309,11 +319,12 @@ export default function Page() {
   async function handleFieldsUpdate(id: string, fields: Partial<DraftRow>) {
     setAllDrafts((prev) => prev.map((d) => d.id === id ? { ...d, ...fields } : d));
     try {
-      await fetch(`/api/drafts/${id}`, {
+      const res = await fetch(`/api/drafts/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(fields),
       });
+      if (res.ok) mergeServerDraft(id, await res.json());
     } catch { /* optimistic — ignore */ }
   }
 
@@ -373,7 +384,9 @@ export default function Page() {
       (d) => d.review_status !== 'approved' && d.review_status !== 'rejected',
     );
     const toApprove = activeDrafts.filter((d) => canApprove(d));
-    const skipped = activeDrafts.filter((d) => d.needs_clarification).length;
+    const skipped = activeDrafts.filter(
+      (d) => d.review_status === 'needs_clarification',
+    ).length;
 
     if (toApprove.length === 0) {
       if (skipped > 0) setBulkSkipCount(skipped);

@@ -67,5 +67,32 @@ export async function PATCH(
     );
   }
 
+  // Implicit review: if a manager edits a needs_clarification draft so that it
+  // now has an owner and a due date, treat that edit as "I've reviewed this"
+  // and flip it back to pending so the Approve button unlocks. Never
+  // auto-approve, and never touch drafts the caller explicitly re-statused.
+  const hasOwner = (data.owners && data.owners.length > 0) || data.owner != null;
+  const hasDueDate = data.due_date != null;
+  const callerSetStatus = parsed.data.review_status !== undefined;
+
+  if (
+    !callerSetStatus &&
+    data.review_status === 'needs_clarification' &&
+    hasOwner &&
+    hasDueDate
+  ) {
+    const { data: promoted, error: promoteError } = await db
+      .from('task_drafts')
+      .update({ review_status: 'pending' })
+      .eq('id', id)
+      .eq('review_status', 'needs_clarification')
+      .select()
+      .single();
+
+    if (!promoteError && promoted) {
+      return NextResponse.json(promoted);
+    }
+  }
+
   return NextResponse.json(data);
 }
