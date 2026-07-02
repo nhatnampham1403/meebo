@@ -40,12 +40,17 @@ function Badge({ status }: { status: ReviewStatus }) {
   );
 }
 
+function hasOwner(draft: DraftRow): boolean {
+  if (draft.owners && draft.owners.length > 0) return true;
+  return !!draft.owner?.trim();
+}
+
 function canApprove(draft: DraftRow): boolean {
   return (
     draft.review_status !== 'approved' &&
     draft.review_status !== 'rejected' &&
     !draft.needs_clarification &&
-    !!draft.owner?.trim() &&
+    hasOwner(draft) &&
     !!draft.due_date
   );
 }
@@ -59,16 +64,12 @@ function inputStyle(disabled: boolean): React.CSSProperties {
   };
 }
 
-function selectStyle(disabled: boolean): React.CSSProperties {
-  return {
-    width: '100%', border: '1px solid #e2e8f0', borderRadius: 4, padding: '4px 8px',
-    fontSize: 13, fontFamily: 'inherit', background: disabled ? '#f8fafc' : '#fff',
-    color: disabled ? '#64748b' : '#1e293b', cursor: disabled ? 'default' : 'pointer',
-    outline: 'none', boxSizing: 'border-box',
-  };
-}
+// ─── Feature 2: Owner cell with multi-select + "Other" Trello lookup ──────────
 
-// ─── Feature 2: Owner cell with team-member dropdown + "Other" Trello lookup ──
+function draftOwners(draft: DraftRow): string[] {
+  if (draft.owners && draft.owners.length > 0) return draft.owners;
+  return draft.owner ? [draft.owner] : [];
+}
 
 function OwnerCell({
   draft,
@@ -81,35 +82,30 @@ function OwnerCell({
   isLocked: boolean;
   onUpdate: (id: string, fields: Partial<DraftRow>) => Promise<void>;
 }) {
-  const matchedMember = teamMembers.find((m) => m.display_name === draft.owner);
-  const startInOther = Boolean(draft.owner && !matchedMember);
-
-  const [mode, setMode] = useState<'select' | 'other'>(startInOther ? 'other' : 'select');
-  const [otherInput, setOtherInput] = useState(startInOther ? (draft.owner ?? '') : '');
+  const owners = draftOwners(draft);
+  const [showOther, setShowOther] = useState(false);
+  const [otherInput, setOtherInput] = useState('');
   const [resolve, setResolve] = useState<{
     status: 'idle' | 'loading' | 'found' | 'error';
     message?: string;
   }>({ status: 'idle' });
 
   if (isLocked) {
-    return <span style={{ fontSize: 13, color: '#64748b' }}>{draft.owner ?? '—'}</span>;
+    return <span style={{ fontSize: 13, color: '#64748b' }}>{owners.join(', ') || '—'}</span>;
   }
 
-  const selectValue = mode === 'other' ? '__other__' : (matchedMember?.display_name ?? '');
-
-  async function handleSelectChange(val: string) {
-    if (val === '__other__') {
-      setMode('other');
-      setOtherInput('');
-      setResolve({ status: 'idle' });
-      return;
-    }
-    setMode('select');
-    const member = teamMembers.find((m) => m.display_name === val);
+  // Persist an updated owners list, keeping owner (legacy) = owners[0].
+  async function saveOwners(next: string[]) {
+    const deduped = Array.from(new Set(next));
     await onUpdate(draft.id, {
-      owner: member?.display_name ?? null,
-      trello_member_id: member?.trello_member_id ?? null,
+      owners: deduped,
+      owner: deduped[0] ?? null,
     });
+  }
+
+  function toggleMember(name: string, checked: boolean) {
+    const next = checked ? [...owners, name] : owners.filter((o) => o !== name);
+    void saveOwners(next);
   }
 
   async function handleOtherBlur() {
@@ -127,51 +123,66 @@ function OwnerCell({
         setResolve({ status: 'error', message: 'Trello member not found' });
         return;
       }
-      setResolve({ status: 'found', message: json.full_name as string });
-      await onUpdate(draft.id, {
-        owner: json.full_name as string,
-        trello_member_id: json.trello_member_id as string,
-      });
+      const fullName = json.full_name as string;
+      setResolve({ status: 'found', message: fullName });
+      await saveOwners([...owners, fullName]);
+      setOtherInput('');
+      setShowOther(false);
+      setResolve({ status: 'idle' });
     } catch {
       setResolve({ status: 'error', message: 'Lookup failed' });
     }
   }
 
+  const memberNames = new Set(teamMembers.map((m) => m.display_name));
+  const extraOwners = owners.filter((o) => !memberNames.has(o));
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 150 }}>
-      <select
-        value={selectValue}
-        onChange={(e) => void handleSelectChange(e.target.value)}
-        style={selectStyle(false)}
-      >
-        <option value="">— Unassigned —</option>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 160 }}>
+      {owners.length > 0 && (
+        <div style={{ fontSize: 12, color: '#1e293b', fontWeight: 500 }}>{owners.join(', ')}</div>
+      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 120, overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: 4, padding: '4px 6px', background: '#fff' }}>
         {teamMembers.map((m) => (
-          <option key={m.id} value={m.display_name}>{m.display_name}</option>
+          <label key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer', color: '#334155' }}>
+            <input
+              type="checkbox"
+              checked={owners.includes(m.display_name)}
+              onChange={(e) => toggleMember(m.display_name, e.target.checked)}
+            />
+            {m.display_name}
+          </label>
         ))}
-        <option value="__other__">— Other... —</option>
-      </select>
-      {mode === 'other' && (
+        {extraOwners.map((name) => (
+          <label key={name} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer', color: '#334155' }}>
+            <input
+              type="checkbox"
+              checked
+              onChange={(e) => toggleMember(name, e.target.checked)}
+            />
+            {name} <span style={{ color: '#94a3b8' }}>(external)</span>
+          </label>
+        ))}
+      </div>
+      {showOther ? (
         <>
           <input
             value={otherInput}
-            onChange={(e) => {
-              setOtherInput(e.target.value);
-              setResolve({ status: 'idle' });
-            }}
+            onChange={(e) => { setOtherInput(e.target.value); setResolve({ status: 'idle' }); }}
             onBlur={() => void handleOtherBlur()}
             placeholder="Trello username or email"
             style={{ ...inputStyle(false), fontSize: 12 }}
           />
-          {resolve.status === 'loading' && (
-            <span style={{ fontSize: 11, color: '#94a3b8' }}>Looking up…</span>
-          )}
-          {resolve.status === 'found' && (
-            <span style={{ fontSize: 11, color: '#16a34a' }}>✓ {resolve.message}</span>
-          )}
-          {resolve.status === 'error' && (
-            <span style={{ fontSize: 11, color: '#dc2626' }}>{resolve.message}</span>
-          )}
+          {resolve.status === 'loading' && <span style={{ fontSize: 11, color: '#94a3b8' }}>Looking up…</span>}
+          {resolve.status === 'error' && <span style={{ fontSize: 11, color: '#dc2626' }}>{resolve.message}</span>}
         </>
+      ) : (
+        <button
+          onClick={() => { setShowOther(true); setResolve({ status: 'idle' }); }}
+          style={{ background: 'none', border: 'none', color: '#2563eb', fontSize: 11, cursor: 'pointer', textAlign: 'left', padding: 0 }}
+        >
+          + Add other…
+        </button>
       )}
     </div>
   );
@@ -637,7 +648,7 @@ export default function Page() {
                             isLocked={isLocked}
                             onUpdate={handleFieldsUpdate}
                           />
-                          {!draft.owner && !isLocked && (
+                          {!hasOwner(draft) && !isLocked && (
                             <span style={{ fontSize: 10, color: '#f59e0b', display: 'block', marginTop: 2 }}>Required for approve</span>
                           )}
                         </td>

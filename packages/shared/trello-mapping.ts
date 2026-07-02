@@ -16,8 +16,12 @@ function formatSourceType(raw: string): string {
 
 export function draftToTrelloCard(
   draft: TaskDraftRow,
-  member: TeamMemberRow | null,
+  member: TeamMemberRow | TeamMemberRow[] | null,
 ): TrelloCardFields {
+  const members = Array.isArray(member) ? member : member ? [member] : [];
+  const idMembers = Array.from(
+    new Set(members.map((m) => m.trello_member_id).filter(Boolean)),
+  );
   const lines: string[] = [
     '## Context',
     draft.context,
@@ -45,7 +49,7 @@ export function draftToTrelloCard(
   return {
     name: draft.extracted_title,
     desc: lines.join('\n'),
-    idMembers: member ? [member.trello_member_id] : [],
+    idMembers,
     due: draft.due_date ?? null,
   };
 }

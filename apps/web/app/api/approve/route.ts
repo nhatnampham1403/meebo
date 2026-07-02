@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { draftToTrelloCard } from '@trello-optimization/shared';
+import type { Database } from '@trello-optimization/shared';
 import { db } from '@/lib/db';
 import { TrelloClient } from '@/lib/trello';
 
@@ -55,24 +56,51 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  let member = null;
-  if (draft.trello_member_id) {
+  // Resolve ALL owners to team_members. Members not found are skipped with a
+  // warning (approval still proceeds). Falls back to the legacy single
+  // owner/trello_member_id when the owners array is empty.
+  type MemberRow = Database['public']['Tables']['team_members']['Row'];
+  const resolvedMembers: MemberRow[] = [];
+  const seenMemberIds = new Set<string>();
+
+  function addMember(m: MemberRow | null) {
+    if (m && m.trello_member_id && !seenMemberIds.has(m.trello_member_id)) {
+      seenMemberIds.add(m.trello_member_id);
+      resolvedMembers.push(m);
+    }
+  }
+
+  const ownerNames: string[] =
+    draft.owners && draft.owners.length > 0
+      ? draft.owners
+      : draft.owner
+        ? [draft.owner]
+        : [];
+
+  for (const name of ownerNames) {
+    const { data: memberRow } = await db
+      .from('team_members')
+      .select('*')
+      .ilike('display_name', name)
+      .maybeSingle();
+    if (memberRow) {
+      addMember(memberRow);
+    } else {
+      console.warn(`[approve] Owner "${name}" not found in team_members — skipping assignment`);
+    }
+  }
+
+  // Legacy fallback: if the draft carried a trello_member_id but no name matched.
+  if (resolvedMembers.length === 0 && draft.trello_member_id) {
     const { data: memberRow } = await db
       .from('team_members')
       .select('*')
       .eq('trello_member_id', draft.trello_member_id)
-      .single();
-    member = memberRow;
-  } else if (draft.owner) {
-    const { data: memberRow } = await db
-      .from('team_members')
-      .select('*')
-      .ilike('display_name', draft.owner)
-      .single();
-    if (memberRow) {
-      member = memberRow;
-    }
+      .maybeSingle();
+    addMember(memberRow);
   }
+
+  const member = resolvedMembers.length > 0 ? resolvedMembers : null;
 
   let listId: string;
   try {

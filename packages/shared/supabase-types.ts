@@ -9,6 +9,7 @@ export interface Database {
           extracted_title: string;
           project: string | null;
           owner: string | null;
+          owners: string[];
           trello_member_id: string | null;
           due_date: string | null;
           priority: 'low' | 'medium' | 'high';
@@ -36,6 +37,7 @@ export interface Database {
           extracted_title: string;
           project?: string | null;
           owner?: string | null;
+          owners?: string[];
           trello_member_id?: string | null;
           due_date?: string | null;
           priority: 'low' | 'medium' | 'high';
@@ -63,6 +65,7 @@ export interface Database {
           extracted_title?: string;
           project?: string | null;
           owner?: string | null;
+          owners?: string[];
           trello_member_id?: string | null;
           due_date?: string | null;
           priority?: 'low' | 'medium' | 'high';
