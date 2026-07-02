@@ -212,6 +212,7 @@ export async function POST(request: NextRequest) {
       extracted_title: task.extracted_title,
       project: task.project,
       owner: task.owner,
+      owners: task.owners ?? [],
       trello_member_id: null as string | null,
       due_date: task.due_date,
       priority: task.priority,
