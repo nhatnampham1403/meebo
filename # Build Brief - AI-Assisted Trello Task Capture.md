@@ -195,17 +195,16 @@ Use a simple stack first.
 | Frontend | Simple web app / React / Next.js | Paste input, review task drafts, approve cards |
 | Backend | Node.js / Python / serverless function | Process input, call AI, call Trello API |
 | Database | Supabase | Store extracted drafts, review status, logs, source text |
-| AI coding assistant | Claude Code | Build integration, inspect API docs, generate/refactor code, write tests |
 | AI model | OpenAI / Claude API depending access | Extract structured task candidates |
 | Task board | Trello | Execution source of truth |
 | Notification | Telegram Bot API | Daily digest and reminders |
 | Deployment | Local first, then lightweight cloud if needed | Keep test cycle fast |
 
-## 8. How to use Claude Code
+## 8. Implementation task breakdown
 
-Claude Code should be used for implementation work, not vague research.
+Implementation work should be scoped into concrete, verifiable tasks rather than open-ended research.
 
-Good Claude Code tasks:
+Good tasks:
 
 • Read Trello API docs and propose API wrapper functions  
 • Create a minimal project structure  
@@ -219,7 +218,7 @@ Good Claude Code tasks:
 • Refactor messy code after prototype works  
 • Generate README and setup instructions  
 
-Do not use Claude Code to make strategic decisions about workflow. Use it to build, test, document, and refactor.
+Strategic decisions about the workflow stay in this brief. Implementation sessions are for building, testing, documenting, and refactoring.
 
 ## 9. Trello API research checklist
 

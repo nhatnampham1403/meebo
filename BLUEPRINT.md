@@ -1,12 +1,12 @@
-# MeeBo — Technical Blueprint (Cursor Implementation Guide)
+# MeeBo — Technical Blueprint (Implementation Guide)
 
-> **Read this first, every session.** This is the single source of truth for building MeeBo. It is written to be pasted into Cursor. When implementing any ticket, follow the function signatures, schemas, and contracts here exactly. Do not invent alternative structures. If something is ambiguous, stop and ask — do not guess.
+> **Read this first, every session.** This is the single source of truth for building MeeBo. When implementing any ticket, follow the function signatures, schemas, and contracts here exactly. Do not invent alternative structures. If something is ambiguous, stop and ask — do not guess.
 
 **Project in one sentence:** Paste meeting notes → OpenAI writes a summary and extracts tasks → the manager reviews → approved tasks become Trello cards filed under the correct project list and assigned to the correct member → (later) a Telegram bot tracks them.
 
 ---
 
-## 0. Golden rules for the AI agent (Cursor)
+## 0. Golden rules for implementation
 
 1. **OpenAI only.** This project uses the OpenAI API (`gpt-4o`). There is no Anthropic/Claude anywhere. If you see a reference to Claude, it is a bug — flag it.
 2. **TypeScript everywhere**, strict mode on.
@@ -499,7 +499,7 @@ Cron reads Trello live, composes a grouped message, sends to the group, logs to 
 
 ## 10. Build tickets
 
-> Implement in order. Each is one Cursor session. Verify *Done when* before moving on. **Phases 1-2 are active; 3-4 are specified but deferred until Telegram is restored.**
+> Implement in order. Each is one focused implementation session. Verify *Done when* before moving on. **Phases 1-2 are active; 3-4 are specified but deferred until Telegram is restored.**
 
 ### PHASE 1 — Foundation: Capture & AI Summary
 
@@ -633,4 +633,4 @@ TELEGRAM_WEBHOOK_SECRET=
 
 ---
 
-*MeeBo Blueprint v2.0 — OpenAI-only, Cursor-optimized. Active scope: Phases 1-2. Start at P1.T1.*
+*MeeBo Blueprint v2.0 — OpenAI-only. Active scope: Phases 1-2. Start at P1.T1.*

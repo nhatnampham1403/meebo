@@ -1,18 +1,18 @@
 # System Architecture Blueprint
 ## AI-Assisted Trello Task Capture & Hygiene Automation
 
-> Companion to **Product Design Spec v1.0**. The spec defines *what* we build; this blueprint defines *how it's structured and in what order*, and gives an AI coding agent (Cursor) discrete, verifiable tickets to execute.
+> Companion to **Product Design Spec v1.0**. The spec defines *what* we build; this blueprint defines *how it's structured and in what order*, and breaks the work into discrete, verifiable tickets.
 
 ---
 
 ## 0. How to use this document
 
-Per your tooling rule — *Claude thinks, Cursor types* — this file is the hand-off artifact. Workflow:
+This file is the hand-off artifact between architecture and implementation. Workflow:
 
 1. Drop this file in the repo root as `BLUEPRINT.md`.
-2. For each ticket in §9, paste the ticket + the relevant interface contract (§5–§8) into Cursor with `@codebase`.
-3. Cursor implements; you verify against the ticket's **Done when** criteria before moving on.
-4. Architecture changes come back here (or to Claude) — never improvised in Cursor.
+2. For each ticket in §9, work from the ticket plus the relevant interface contract (§5–§8).
+3. Implement, then verify against the ticket's **Done when** criteria before moving on.
+4. Architecture changes come back here — never improvised mid-implementation.
 
 **Open decisions that need your sign-off before Week 1** are collected in §2. Everything else is a defaulted assumption, marked `[ASSUMPTION]`, that you can override.
 
@@ -249,9 +249,9 @@ sequenceDiagram
 
 ---
 
-## 9. Build sequence — agent-executable tickets
+## 9. Build sequence — implementation tickets
 
-Aligned to spec §5/§10 phases. Each ticket is scoped to be implementable in one Cursor session with a clear **Done when**.
+Aligned to spec §5/§10 phases. Each ticket is scoped to be implementable in one focused session with a clear **Done when**.
 
 ### Week 1 — V1: Capture + Review
 - **T1.1 Scaffold monorepo** — workspaces `web`, `worker`, `shared`; `.env.example`; Supabase client. *Done when:* `npm run dev` boots the web app and a no-op worker.
